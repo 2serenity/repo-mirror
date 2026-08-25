@@ -1,0 +1,46 @@
+name: Repository mirror
+description: >-
+  Fast-forward-only peer mirror of a single branch. Symmetric wrapper around
+  mirror.sh: classifies EQUAL / LOCAL_AHEAD / PEER_AHEAD / DIVERGED and pushes
+  only when this side is ahead. The receiving branch on the peer must be
+  protected so that only this key can write to it.
+inputs:
+  branch:
+    description: "Branch to mirror (MIRROR_BRANCH)."
+    required: true
+  peer-url:
+    description: "SSH URL of the peer repository (MIRROR_PEER_URL)."
+    required: true
+  ssh-key:
+    description: "Private SSH key (deploy key) contents."
+    required: true
+  known-hosts:
+    description: "known_hosts entry for the peer host."
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Prepare SSH material
+      shell: bash
+      env:
+        SSH_KEY: ${{ inputs.ssh-key }}
+        KNOWN_HOSTS: ${{ inputs.known-hosts }}
+      run: |
+        set -eu
+        install -d -m 700 "$HOME/.ssh"
+        printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/mirror_key"
+        chmod 600 "$HOME/.ssh/mirror_key"
+        printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+        chmod 644 "$HOME/.ssh/known_hosts"
+
+    - name: Mirror
+      shell: bash
+      env:
+        MIRROR_BRANCH: ${{ inputs.branch }}
+        MIRROR_PEER_URL: ${{ inputs.peer-url }}
+      run: |
+        set -eu
+        test -n "$MIRROR_PEER_URL"
+        # mirror.sh reads the key and known_hosts from $HOME/.ssh, which the
+        # previous step just populated.
+        sh "$GITHUB_ACTION_PATH/mirror.sh"

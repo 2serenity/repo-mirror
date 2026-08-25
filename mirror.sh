@@ -1,0 +1,188 @@
+#!/bin/sh
+set -eu
+
+BRANCH="${MIRROR_BRANCH:-main}"
+
+PEER_REMOTE="mirror-peer"
+LOCAL_REF="refs/remotes/mirror-local/${BRANCH}"
+PEER_REF="refs/remotes/mirror-peer/${BRANCH}"
+
+SSH_COMMAND="ssh \
+  -i ${HOME}/.ssh/mirror_key \
+  -o IdentitiesOnly=yes \
+  -o StrictHostKeyChecking=yes \
+  -o UserKnownHostsFile=${HOME}/.ssh/known_hosts \
+  -o ConnectTimeout=10 \
+  -o ServerAliveInterval=15 \
+  -o ServerAliveCountMax=3"
+
+log() {
+  printf '[mirror] %s\n' "$*" >&2
+}
+
+setup_peer() {
+  git remote remove "$PEER_REMOTE" >/dev/null 2>&1 || true
+  git remote add "$PEER_REMOTE" "$MIRROR_PEER_URL"
+}
+
+fetch_local() {
+  git fetch --no-tags origin \
+    "+refs/heads/${BRANCH}:${LOCAL_REF}"
+}
+
+fetch_peer() {
+  GIT_SSH_COMMAND="$SSH_COMMAND" \
+    git fetch --no-tags "$PEER_REMOTE" \
+    "+refs/heads/${BRANCH}:${PEER_REF}"
+}
+
+classify() {
+  local_sha="$(git rev-parse "$LOCAL_REF")"
+  peer_sha="$(git rev-parse "$PEER_REF")"
+
+  log "local=${local_sha}"
+  log "peer=${peer_sha}"
+
+  if [ "$local_sha" = "$peer_sha" ]; then
+    printf '%s\n' "EQUAL"
+
+  elif git merge-base --is-ancestor "$PEER_REF" "$LOCAL_REF"; then
+    printf '%s\n' "LOCAL_AHEAD"
+
+  elif git merge-base --is-ancestor "$LOCAL_REF" "$PEER_REF"; then
+    printf '%s\n' "PEER_AHEAD"
+
+  else
+    printf '%s\n' "DIVERGED"
+  fi
+}
+
+push_local_to_peer() {
+  GIT_SSH_COMMAND="$SSH_COMMAND" \
+    git push "$PEER_REMOTE" \
+    "${LOCAL_REF}:refs/heads/${BRANCH}"
+}
+
+setup_peer
+
+if ! fetch_local; then
+  log "LOCAL FETCH ERROR"
+  exit 30
+fi
+
+if ! fetch_peer; then
+  log "PEER FETCH ERROR"
+  exit 31
+fi
+
+state="$(classify)"
+log "state=${state}"
+
+case "$state" in
+
+  EQUAL)
+    log "already synchronized"
+    exit 0
+    ;;
+
+  PEER_AHEAD)
+    log "peer is ahead; this side does nothing"
+    exit 0
+    ;;
+
+  DIVERGED)
+    log "MIRROR DIVERGED"
+    exit 20
+    ;;
+
+  LOCAL_AHEAD)
+    log "local is ahead; attempting fast-forward push"
+
+    if push_local_to_peer; then
+      log "push succeeded"
+      exit 0
+    fi
+
+    log "push rejected/failed; refetching both sides"
+
+    if ! fetch_local; then
+      log "LOCAL FETCH ERROR AFTER PUSH FAILURE"
+      exit 30
+    fi
+
+    if ! fetch_peer; then
+      log "PEER FETCH ERROR AFTER PUSH FAILURE"
+      exit 31
+    fi
+
+    state="$(classify)"
+    log "state_after_refetch=${state}"
+
+    case "$state" in
+
+      EQUAL)
+        log "another actor already synchronized the repositories"
+        exit 0
+        ;;
+
+      PEER_AHEAD)
+        log "peer moved ahead; opposite mirror will synchronize this side"
+        exit 0
+        ;;
+
+      DIVERGED)
+        log "MIRROR DIVERGED"
+        exit 20
+        ;;
+
+      LOCAL_AHEAD)
+        log "still local-ahead; retrying one normal fast-forward push"
+
+        if push_local_to_peer; then
+          log "retry succeeded"
+          exit 0
+        fi
+
+        log "retry rejected/failed; performing final state check"
+
+        if ! fetch_local; then
+          log "LOCAL FETCH ERROR AFTER RETRY"
+          exit 30
+        fi
+
+        if ! fetch_peer; then
+          log "PEER FETCH ERROR AFTER RETRY"
+          exit 31
+        fi
+
+        state="$(classify)"
+        log "state_after_retry=${state}"
+
+        case "$state" in
+          EQUAL)
+            log "repositories became synchronized during retry"
+            exit 0
+            ;;
+
+          PEER_AHEAD)
+            log "peer moved ahead during retry; opposite mirror will synchronize this side"
+            exit 0
+            ;;
+
+          DIVERGED)
+            log "MIRROR DIVERGED"
+            exit 20
+            ;;
+
+          LOCAL_AHEAD)
+            log "PUSH ERROR: local remains ahead after retry"
+            exit 32
+            ;;
+        esac
+        ;;
+    esac
+    ;;
+esac
+
+log "UNKNOWN MIRROR STATE"
+exit 99

@@ -1,0 +1,46 @@
+spec:
+  inputs:
+    job_name:
+      default: mirror
+      description: "Job name. Set differently to run several peers in one pipeline."
+    stage:
+      default: .pre
+      description: "Stage for the job. .pre always exists, so consumers need not declare a stage."
+    branch:
+      description: "Branch to mirror. Becomes MIRROR_BRANCH. Required."
+    peer_url:
+      description: "SSH URL of the peer repository (ssh://git@host:port/group/project.git). Becomes MIRROR_PEER_URL. Required."
+    resource_group:
+      default: repository-mirror
+      description: "Prevents two mirror runs from racing. Unique per project."
+    image:
+      default: alpine:3.21
+      description: "Image for the job."
+    rules:
+      type: array
+      default:
+        - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      description: "When to run. Policy stays with the consumer."
+
+"$[[ inputs.job_name ]]":
+  stage: $[[ inputs.stage ]]
+  image: $[[ inputs.image ]]
+  resource_group: $[[ inputs.resource_group ]]
+  variables:
+    GIT_DEPTH: "0"
+    MIRROR_BRANCH: $[[ inputs.branch ]]
+    MIRROR_PEER_URL: $[[ inputs.peer_url ]]
+  rules: $[[ inputs.rules ]]
+  before_script:
+    - apk add --no-cache git openssh-client
+    - test -n "$MIRROR_PEER_URL"
+    - test -f "$MIRROR_SSH_KEY"
+    - test -f "$MIRROR_KNOWN_HOSTS"
+    - install -d -m 700 "$HOME/.ssh"
+    - cp "$MIRROR_SSH_KEY" "$HOME/.ssh/mirror_key"
+    - chmod 600 "$HOME/.ssh/mirror_key"
+    - cp "$MIRROR_KNOWN_HOSTS" "$HOME/.ssh/known_hosts"
+    - chmod 644 "$HOME/.ssh/known_hosts"
+  script:
+    - |
+      @@MIRROR_SH@@
