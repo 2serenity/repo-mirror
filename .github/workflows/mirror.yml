@@ -48,14 +48,17 @@ jobs:
 
     steps:
       - name: Check out full history
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # mirror.sh compares full branches; a shallow clone is useless here.
           fetch-depth: 0
           ref: ${{ inputs.branch }}
 
+      # Must name this repository explicitly. A reusable workflow called from
+      # another repository runs its steps in the CALLER's workspace, so a local
+      # path ("uses: ./") would look for action.yml in the consumer's checkout.
       - name: Mirror
-        uses: ./
+        uses: 2serenity/repo-mirror@v1
         with:
           branch: ${{ inputs.branch }}
           peer-url: ${{ inputs.peer-url }}

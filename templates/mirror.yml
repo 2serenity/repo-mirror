@@ -16,16 +16,20 @@ spec:
     image:
       default: alpine:3.21
       description: "Image for the job."
+    timeout:
+      default: 10m
+      description: "Job timeout. An unreachable peer must not hold the pipeline for the project default."
     rules:
       type: array
       default:
         - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
       description: "When to run. Policy stays with the consumer."
-
+---
 "$[[ inputs.job_name ]]":
   stage: $[[ inputs.stage ]]
   image: $[[ inputs.image ]]
   resource_group: $[[ inputs.resource_group ]]
+  timeout: $[[ inputs.timeout ]]
   variables:
     GIT_DEPTH: "0"
     MIRROR_BRANCH: $[[ inputs.branch ]]
@@ -34,6 +38,7 @@ spec:
   before_script:
     - apk add --no-cache git openssh-client
     - test -n "$MIRROR_PEER_URL"
+    - test -n "$MIRROR_BRANCH"
     - test -f "$MIRROR_SSH_KEY"
     - test -f "$MIRROR_KNOWN_HOSTS"
     - install -d -m 700 "$HOME/.ssh"

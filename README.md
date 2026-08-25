@@ -40,11 +40,10 @@ concurrent push by the other side resolves to `0` instead of a false failure.
 
 ```yaml
 include:
-  - component: gitlab.example.com/infrastructure/repo-mirror/mirror@1.0.0
+  - component: gitlab.example.com/infrastructure/repo-mirror/mirror@1.0.1
     inputs:
       branch: main
       peer_url: ssh://git@gitlab.example.com:2222/group/project.git
-      resource_group: example-repository-mirror
       rules:
         - if: '$CI_COMMIT_BRANCH == "main"'
 ```
@@ -52,7 +51,9 @@ include:
 Project CI/CD variables (type **File**): `MIRROR_SSH_KEY`,
 `MIRROR_KNOWN_HOSTS`.
 
-The job runs in `.pre` by default, so no `stages:` entry is needed.
+The job runs in `.pre` by default, so no `stages:` entry is needed. Note that
+GitLab does not create a pipeline made up of `.pre` / `.post` jobs only — if
+mirroring is the sole job in a project, give it a normal stage instead.
 
 ## GitHub consumer
 
@@ -68,7 +69,8 @@ jobs:
       known-hosts: ${{ secrets.MIRROR_KNOWN_HOSTS }}
 ```
 
-Repository secrets: `MIRROR_SSH_KEY`, `MIRROR_KNOWN_HOSTS`.
+Repository secrets: `MIRROR_SSH_KEY`, `MIRROR_KNOWN_HOSTS`. Secrets are mapped
+by name here, so `secrets: inherit` does **not** work — the names differ.
 
 ## Inputs (GitLab component)
 
@@ -80,15 +82,32 @@ Repository secrets: `MIRROR_SSH_KEY`, `MIRROR_KNOWN_HOSTS`.
 | `peer_url` | string | — | **yes** |
 | `resource_group` | string | `repository-mirror` | no |
 | `image` | string | `alpine:3.21` | no |
+| `timeout` | string | `10m` | no |
 | `rules` | array | `[{if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'}]` | no |
+
+`resource_group` is already scoped to the consuming project, so the default
+needs no project-specific prefix; override it only to run several mirrors in
+one project.
+
+GitLab enforces that `branch` and `peer_url` are *given*, not that they are
+non-empty: an empty string would otherwise fall back to `main` silently. The
+job's `before_script` therefore fails fast on an empty value.
 
 ## Development
 
 ```sh
 docker run --rm -v "$PWD:/w" -w /w alpine:3.21 \
-  sh -c 'apk add --no-cache jq yq >/dev/null && sh ci/validate.sh'
+  sh -c 'apk add --no-cache yq >/dev/null && sh ci/validate.sh'
+
+docker run --rm -v "$PWD:/w" -w /w alpine:3.21 \
+  sh -c 'apk add --no-cache git >/dev/null && sh ci/test-mirror.sh'
 ```
 
 Edit `mirror.sh` (source of truth) and run `sh ci/embed.sh` to regenerate
 `templates/mirror.yml`. Never edit the generated file by hand — the validator
 fails on drift.
+
+The project pipeline also includes its own component with `rules: [{when:
+never}]`, so every commit has to compile `spec:` and every `$[[ inputs.* ]]`.
+That check exists because release `1.0.0` shipped unusable while the pipeline
+was green.
