@@ -8,7 +8,7 @@ name: Mirror repository
 #       uses: 2serenity/repo-mirror/.github/workflows/mirror.yml@v1
 #       with:
 #         branch: dev
-#         peer-url: ssh://git@gitlab.example.com:2222/group/project.git
+#         peer-url: ssh://git@example.com:22/group/project.git
 #       secrets:
 #         ssh-key: ${{ secrets.MIRROR_SSH_KEY }}
 #         known-hosts: ${{ secrets.MIRROR_KNOWN_HOSTS }}

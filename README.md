@@ -38,12 +38,14 @@ concurrent push by the other side resolves to `0` instead of a false failure.
 
 ## GitLab consumer
 
+Hosts and namespaces below are placeholders — substitute your own.
+
 ```yaml
 include:
-  - component: gitlab.example.com/infrastructure/repo-mirror/mirror@1.0.1
+  - component: gitlab.example.com/your-group/repo-mirror/mirror@1.0.1
     inputs:
       branch: main
-      peer_url: ssh://git@gitlab.example.com:2222/group/project.git
+      peer_url: ssh://git@example.com:22/group/project.git
       rules:
         - if: '$CI_COMMIT_BRANCH == "main"'
 ```
@@ -60,10 +62,10 @@ mirroring is the sole job in a project, give it a normal stage instead.
 ```yaml
 jobs:
   mirror:
-    uses: 2serenity/repo-mirror/.github/workflows/mirror.yml@v1
+    uses: your-org/repo-mirror/.github/workflows/mirror.yml@v1
     with:
       branch: dev
-      peer-url: ssh://git@gitlab.example.com:2222/your-group/your-project.git
+      peer-url: ssh://git@example.com:22/group/project.git
     secrets:
       ssh-key: ${{ secrets.MIRROR_SSH_KEY }}
       known-hosts: ${{ secrets.MIRROR_KNOWN_HOSTS }}

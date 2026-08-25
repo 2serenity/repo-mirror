@@ -49,14 +49,14 @@
 
 Добавлено:
 
-- Первая версия. Механизм A (peer fast-forward mirror) из `~/website` и
-  `~/example-project` вынесен в переиспользуемый компонент. Источник правды —
+- Первая версия. Механизм A (peer fast-forward mirror) вынесен из
+  репозиториев-потребителей в переиспользуемый компонент. Источник правды —
   `mirror.sh`, одинаковый для GitLab (инлайн в компонент) и GitHub (composite
   action).
 - `mirror.sh` умеет классифицировать `EQUAL / LOCAL_AHEAD / PEER_AHEAD /
   DIVERGED` и при `LOCAL_AHEAD` делает refetch + финальную перепроверку перед
-  `exit 32` (доработка поведения example-project, где второй неудачный push давал
-  безусловный `exit 32`).
+  `exit 32` (доработка поведения прежней копии, где второй неудачный push
+  давал безусловный `exit 32`).
 - `mirror.sh` усилен SSH-таймаутами: `ConnectTimeout=10`,
   `ServerAliveInterval=15`, `ServerAliveCountMax=3` — защита от зависания
   пайплайна при недоступном пире.
