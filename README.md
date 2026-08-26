@@ -20,21 +20,88 @@ executes the file directly. The two are kept identical by `ci/validate.sh`
 |---|---|---|
 | `EQUAL` | branches identical | `0` |
 | `LOCAL_AHEAD` | this side has commits | `0` after push |
-| `PEER_AHEAD` | peer moved ahead; opposite mirror will sync | `0` |
-| `DIVERGED` | both sides diverged | `20` |
+| `PEER_AHEAD` | peer is ahead; this side does nothing | `0` |
+| `DIVERGED` | both sides have commits the other lacks | `20` |
 | fetch error (local / peer) | network / auth | `30` / `31` |
 | still ahead after retry | push rejected | `32` |
 
 On `LOCAL_AHEAD` it retries with a refetch and a final state check, so a
 concurrent push by the other side resolves to `0` instead of a false failure.
 
-## Required setup (both sides)
+One installation of this mirror **only ever pushes**. `PEER_AHEAD` is therefore
+not a fix-up — it is this side stepping aside. What happens next depends
+entirely on the topology you chose.
 
-1. The **receiving branch on the peer must be protected** and writable only by
-   the mirror's deploy key. Otherwise a direct push to the peer makes `mirror.sh`
-   see `PEER_AHEAD`, exit successfully and silently stop mirroring.
-2. Provide the SSH key and `known_hosts` as **File** variables/secrets named
-   `MIRROR_SSH_KEY` and `MIRROR_KNOWN_HOSTS` (fixed contract — not inputs).
+## Topology
+
+One question decides it:
+
+> Does anyone push to the branch on the peer, other than this mirror?
+
+**No → one-way.** Install the component on this side only, and protect the
+receiving branch on the peer so that only the mirror's key can write to it.
+`DIVERGED` then cannot happen: the peer's branch moves only when this mirror
+moves it.
+
+**Yes → two-way.** Install the component on *both* sides, each pointing at the
+other. Neither side is a mere destination, and nothing is silently dropped.
+
+|  | one-way | two-way |
+|---|---|---|
+| Installations | 1 | 2, one per side |
+| Receiving branch protected | **required** | recommended, with the mirror key allowed to push |
+| `PEER_AHEAD` means | delivery has stalled — investigate | the other side's mirror will deliver it here |
+| `DIVERGED` | impossible by construction | possible; needs manual recovery |
+| Extra pipeline per delivery | no | yes — receiving side runs and reports `EQUAL` |
+
+Two-way is **two independent push mirrors, not one bidirectional process.**
+Each side only ever pushes its own commits; a `PEER_AHEAD` on one side is
+resolved by the *other* side's run, which sees `LOCAL_AHEAD` and pushes. There
+is no shared lock between the two systems — `resource_group` (GitLab) and
+`concurrency` (GitHub) each coordinate their own side only.
+
+### The failure mode each topology carries
+
+- **one-way**: `PEER_AHEAD` exits `0`. If the receiving branch loses its
+  protection and someone pushes there directly, this mirror keeps reporting
+  success and quietly stops delivering. Nothing turns red.
+- **two-way**: independent commits on both sides produce `DIVERGED` (exit `20`)
+  on both. The mirror refuses to act — deliberately, since any automatic
+  resolution would drop someone's commits.
+
+## Required setup
+
+Both topologies need, on every side that runs a mirror:
+
+1. An SSH key with **write access to the peer**, and the peer's host key.
+   Provide them as **File** variables/secrets named `MIRROR_SSH_KEY` and
+   `MIRROR_KNOWN_HOSTS` (fixed contract — not inputs). Generate the host key
+   entry with `ssh-keyscan -p <port> <host>`; `StrictHostKeyChecking=yes` is
+   hardcoded, so a missing or stale entry fails the job with `31`.
+2. In two-way, use **two separate keys** — side A's key registered on B, side
+   B's key on A. One shared keypair works but widens the blast radius of a
+   leak to both repositories at once.
+
+On GitLab a deploy key may push to a protected branch, but only if the key's
+creator is a project member who can view the code and someone is selected under
+*Allowed to push and merge*. A push made with a deploy key does trigger a
+pipeline — which is what makes the receiving side run its own mirror and report
+`EQUAL`.
+
+## Recovering from `DIVERGED`
+
+The mirror will not resolve this, now or ever: both sides hold commits the
+other lacks, and every automatic resolution silently loses one of them.
+
+1. Fetch both branches and look at what each side actually has:
+   `git log --oneline --left-right --boundary A/main...B/main`
+2. Decide, by hand, which history survives — merge, rebase, or cherry-pick.
+3. Push the agreed history to one side, and let its mirror deliver it, or push
+   to both if the branches are protected against the mirror key.
+4. Re-run the mirror on both sides; the expected result is `EQUAL`.
+
+Until then both mirrors keep exiting `20` on every run, which is the intended
+loud failure.
 
 ## GitLab consumer
 
@@ -42,7 +109,7 @@ Hosts and namespaces below are placeholders — substitute your own.
 
 ```yaml
 include:
-  - component: gitlab.example.com/your-group/repo-mirror/mirror@1.0.1
+  - component: gitlab.example.com/your-group/repo-mirror/mirror@1.0.2
     inputs:
       branch: main
       peer_url: ssh://git@example.com:22/group/project.git
@@ -53,9 +120,33 @@ include:
 Project CI/CD variables (type **File**): `MIRROR_SSH_KEY`,
 `MIRROR_KNOWN_HOSTS`.
 
+For two-way, add the same block to the peer project, with `peer_url` pointing
+back here.
+
 The job runs in `.pre` by default, so no `stages:` entry is needed. Note that
 GitLab does not create a pipeline made up of `.pre` / `.post` jobs only — if
 mirroring is the sole job in a project, give it a normal stage instead.
+
+## Cross-instance peers
+
+> "You can only reference components in the same GitLab instance as your
+> project." — GitLab docs, CI/CD components
+
+So a peer that lives on a different GitLab — gitlab.com against a self-managed
+instance, say — cannot include this component at all, no matter how the catalog
+is published. That side gets the generated standalone job instead:
+
+1. Copy `templates/mirror-standalone.yml` (from the tag you consume) into the
+   peer repository, e.g. as `.gitlab/ci/mirror.yml`.
+2. Include it locally: `include: [{local: '.gitlab/ci/mirror.yml'}]`.
+3. Supply the two values as **project CI/CD variables** rather than inputs:
+   `MIRROR_BRANCH` and `MIRROR_PEER_URL`, plus the two File variables.
+4. Override anything else by redeclaring the key — `stage`, `rules`, `image`.
+
+That file is generated from `mirror.sh` by the same `ci/embed.sh` and checked
+for drift by `ci/validate.sh`, so it is a *copy of a release*, not a fork of
+the logic. Re-copy it when you move to a new tag; nothing on the other instance
+can do that for you.
 
 ## GitHub consumer
 
@@ -73,6 +164,10 @@ jobs:
 
 Repository secrets: `MIRROR_SSH_KEY`, `MIRROR_KNOWN_HOSTS`. Secrets are mapped
 by name here, so `secrets: inherit` does **not** work — the names differ.
+
+Only pushes made with `GITHUB_TOKEN` are excluded from triggering workflows, so
+in a two-way setup a delivery arriving here does start the mirror workflow,
+which then reports `EQUAL`.
 
 ## Inputs (GitLab component)
 
@@ -105,11 +200,15 @@ docker run --rm -v "$PWD:/w" -w /w alpine:3.21 \
   sh -c 'apk add --no-cache git >/dev/null && sh ci/test-mirror.sh'
 ```
 
-Edit `mirror.sh` (source of truth) and run `sh ci/embed.sh` to regenerate
-`templates/mirror.yml`. Never edit the generated file by hand — the validator
-fails on drift.
+Edit `mirror.sh` (source of truth) and run `sh ci/embed.sh` to regenerate both
+`templates/mirror.yml` and `templates/mirror-standalone.yml`. Never edit a
+generated file by hand — the validator fails on drift.
+
+The behavioural test drives the script from both sides over `file://`, so the
+two-way handover is asserted rather than assumed. SSH plumbing is not covered:
+only a real run against a real peer proves that part.
 
 The project pipeline also includes its own component with `rules: [{when:
-never}]`, so every commit has to compile `spec:` and every `$[[ inputs.* ]]`.
-That check exists because release `1.0.0` shipped unusable while the pipeline
-was green.
+never}]`, and the standalone artefact alongside it, so every commit has to
+compile `spec:` and every `$[[ inputs.* ]]`. That check exists because release
+`1.0.0` shipped unusable while the pipeline was green.

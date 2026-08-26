@@ -15,6 +15,11 @@
 #     by a YAML document separator is silently unusable: GitLab answers every
 #     consumer with "Given inputs not defined in the spec section". That is
 #     how 1.0.0 shipped broken, so the shape is asserted explicitly.
+#
+# templates/mirror-standalone.yml is generated from the same body for peers on
+# another GitLab instance, which cannot reference this catalog at all. It is
+# held to the mirror image of the component's shape: one document, no spec:,
+# no input interpolation left in it.
 
 set -eu
 
@@ -102,17 +107,69 @@ else
   fi
 fi
 
-# 5. Drift: regenerate to a temp file and diff against the committed one.
-TMP=$(mktemp /tmp/mirror-gen.XXXXXX)
-sh ci/embed.sh "$TMP" >/dev/null
-if diff -u "$TMP" templates/mirror.yml >/dev/null 2>&1; then
-  ok "no drift: templates/mirror.yml matches mirror.sh"
-else
-  bad "drift: templates/mirror.yml out of sync with mirror.sh (run sh ci/embed.sh)"
-fi
-rm -f "$TMP"
+# 5. Standalone artefact: exactly the opposite shape - a single plain job with
+#    no spec: header, because the consuming side includes it as a local file and
+#    has no way to pass component inputs.
+STANDALONE="templates/mirror-standalone.yml"
 
-# 6. GitHub reusable workflow must not use a local action path. When a reusable
+if [ ! -f "$STANDALONE" ]; then
+  bad "$STANDALONE missing (run sh ci/embed.sh)"
+else
+  NSEP=$(grep -c '^---$' "$STANDALONE" || true)
+  if [ "$NSEP" -eq 0 ]; then
+    ok "$STANDALONE: single document, no spec: separator"
+  else
+    bad "$STANDALONE: must be one document, found $NSEP '---' separators"
+  fi
+
+  if grep -q '\$\[\[' "$STANDALONE"; then
+    bad "$STANDALONE: contains \$[[ - inputs do not exist outside a component"
+  else
+    ok "$STANDALONE: no input interpolation"
+  fi
+
+  SJOBS=$(yq -r 'keys | .[]' "$STANDALONE" 2>/dev/null || true)
+  SNJOB=$(printf '%s\n' "$SJOBS" | grep -c . || true)
+
+  if [ "$SNJOB" -eq 1 ] && [ "$SJOBS" != "spec" ]; then
+    ok "$STANDALONE: exactly one job ($SJOBS)"
+  else
+    bad "$STANDALONE: expected 1 job and no spec:, found $SNJOB ($SJOBS)"
+  fi
+
+  SJOBKEY=$(printf '%s\n' "$SJOBS" | head -1)
+
+  if yq -e ".[\"$SJOBKEY\"].variables.GIT_DEPTH" "$STANDALONE" >/dev/null 2>&1; then
+    ok "$SJOBKEY: variables.GIT_DEPTH present"
+  else
+    bad "$SJOBKEY: variables.GIT_DEPTH missing"
+  fi
+
+  if grep -q '@@MIRROR_SH@@' "$STANDALONE"; then
+    bad "$STANDALONE: marker not expanded (run sh ci/embed.sh)"
+  else
+    ok "$STANDALONE: marker expanded"
+  fi
+fi
+
+# 6. Drift: regenerate each artefact to a temp file and diff against the
+#    committed one. This is what makes "single source of truth" true rather
+#    than aspirational - and it now covers both packagings.
+check_drift() { # <generated file> <template>
+  TMP=$(mktemp /tmp/mirror-gen.XXXXXX)
+  sh ci/embed.sh "$TMP" "$2" >/dev/null
+  if diff -u "$TMP" "$1" >/dev/null 2>&1; then
+    ok "no drift: $1 matches mirror.sh"
+  else
+    bad "drift: $1 out of sync with mirror.sh (run sh ci/embed.sh)"
+  fi
+  rm -f "$TMP"
+}
+
+check_drift templates/mirror.yml            templates/mirror.yml.in
+check_drift "$STANDALONE"                   templates/mirror-standalone.yml.in
+
+# 7. GitHub reusable workflow must not use a local action path. When a reusable
 #    workflow is called from another repository, steps run in the CALLER's
 #    workspace, so "uses: ./" looks for action.yml in the consumer's checkout,
 #    where it does not exist. It must name this repository explicitly, at a tag

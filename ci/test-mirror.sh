@@ -8,6 +8,10 @@
 # Peers talk over file:// instead of ssh, so GIT_SSH_COMMAND is never exercised
 # here: this catches regressions in classify() and in the decision tree, not in
 # the SSH plumbing. That part is only proven by a real run against a real peer.
+#
+# The TWO-WAY cases run the same script from BOTH sides, which is what the
+# script's own PEER_AHEAD message promises ("opposite mirror will synchronize
+# this side"). Without them that promise is only a comment.
 
 set -eu
 
@@ -32,7 +36,11 @@ git config --global advice.detachedHead false
 S="$ROOT/s"
 
 # origin.git + peer.git holding one identical commit, plus a work clone of
-# origin. That is the EQUAL starting point every case builds on.
+# each. That is the EQUAL starting point every case builds on.
+#
+# work      is the checkout the mirror runs in on side A (origin = origin.git)
+# work-peer is the same thing on side B (origin = peer.git) - the two-way cases
+#           drive the mirror from there, with the roles of the repos swapped.
 setup() {
   rm -rf "$S"
   mkdir -p "$S"
@@ -47,6 +55,8 @@ setup() {
     git push -q origin main
     git push -q "$S/peer.git" main
   )
+  git clone -q "$S/peer.git" "$S/work-peer" 2>/dev/null
+  WORK="$S/work"
 }
 
 # Commit on top of a bare repo's main, through a throwaway clone.
@@ -65,9 +75,13 @@ commit_to() { # <bare repo> <text>
 
 sha_of() { git --git-dir="$1" rev-parse main; }
 
+# Which side the mirror runs from. setup() resets it to side A; the two-way
+# cases point it at the peer's checkout to run the very same script from side B.
+WORK="$S/work"
+
 run_mirror() { # <peer url>
   (
-    cd "$S/work"
+    cd "$WORK"
     MIRROR_BRANCH=main MIRROR_PEER_URL="$1" sh "$MIRROR_SH"
   ) > "$ROOT/log" 2>&1
 }
@@ -131,6 +145,40 @@ setup
 commit_to "$S/origin.git" local-1
 commit_to "$S/peer.git" peer-1
 expect "DIVERGED" 20 DIVERGED
+
+# --- TWO-WAY: the peer's own mirror delivers what this side refused to ------
+# One installation only ever pushes. Two installations, one per side, are what
+# make delivery bidirectional - and what turn PEER_AHEAD from a silent stall
+# into a handover.
+setup
+commit_to "$S/peer.git" peer-1
+before=$(sha_of "$S/origin.git")
+
+expect "TWO-WAY: side A yields" 0 PEER_AHEAD
+[ "$(sha_of "$S/origin.git")" = "$before" ] \
+  && ok "TWO-WAY: side A left origin untouched" \
+  || bad "TWO-WAY: side A moved origin"
+
+# Same script, opposite side: peer.git is now "local" and origin.git is "peer".
+WORK="$S/work-peer"
+expect "TWO-WAY: side B delivers" 0 LOCAL_AHEAD "$S/origin.git"
+[ "$(sha_of "$S/origin.git")" = "$(sha_of "$S/peer.git")" ] \
+  && ok "TWO-WAY: origin == peer after the handover" \
+  || bad "TWO-WAY: origin != peer after the handover"
+
+# --- TWO-WAY: converged state is stable from both sides ---------------------
+# Each delivery triggers a pipeline on the receiving side, so the mirror there
+# runs against an already-synchronized pair. That run must be a no-op, not a
+# push that bounces back.
+expect "TWO-WAY: side B sees EQUAL" 0 EQUAL "$S/origin.git"
+
+WORK="$S/work"
+before_o=$(sha_of "$S/origin.git")
+before_p=$(sha_of "$S/peer.git")
+expect "TWO-WAY: side A sees EQUAL" 0 EQUAL
+{ [ "$(sha_of "$S/origin.git")" = "$before_o" ] && [ "$(sha_of "$S/peer.git")" = "$before_p" ]; } \
+  && ok "TWO-WAY: neither side moved once converged" \
+  || bad "TWO-WAY: a side moved after convergence"
 
 # --- fetch errors -----------------------------------------------------------
 setup

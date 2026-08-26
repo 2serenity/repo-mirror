@@ -18,6 +18,15 @@ include:
       rules:
         - when: never
 
+  # The standalone artefact ships to peers on OTHER GitLab instances, which
+  # cannot reference this catalog at all. Nothing else would ever parse it, so
+  # it is compiled here too and then switched off by the override below.
+  - local: templates/mirror-standalone.yml
+
+mirror:
+  rules:
+    - when: never
+
 variables:
   ALPINE_IMAGE: alpine:3.21
 

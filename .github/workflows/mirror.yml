@@ -1,7 +1,8 @@
 name: Mirror repository
 
-# Reusable workflow: one-directional fast-forward-only mirror of a branch to a
-# peer over SSH. Intended to be called from a consumer repository, e.g.
+# Reusable workflow: fast-forward-only mirror of a branch to a peer over SSH.
+# One installation only pushes; install it on both sides for a two-way mirror.
+# Intended to be called from a consumer repository, e.g.
 #
 #   jobs:
 #     mirror:
@@ -13,11 +14,19 @@ name: Mirror repository
 #         ssh-key: ${{ secrets.MIRROR_SSH_KEY }}
 #         known-hosts: ${{ secrets.MIRROR_KNOWN_HOSTS }}
 #
-# mirror.sh is symmetric and can run from either side. While only one side is
-# active, this has an important consequence: if anyone pushes directly to the
-# peer branch, mirror.sh sees PEER_AHEAD, exits successfully and does nothing —
-# changes from this side would silently stop arriving. The receiving branch on
-# the peer MUST therefore be protected and writable only by this mirror's key.
+# mirror.sh is symmetric and can run from either side; PEER_AHEAD makes it step
+# aside with exit 0. What that means depends on the topology:
+#
+#   one-way (this side only): nothing will deliver the peer's commits back, so
+#     a direct push to the peer branch silently stops mirroring while every run
+#     still reports success. The receiving branch MUST be protected and
+#     writable only by this mirror's key.
+#   two-way (installed on both sides): the peer's own mirror pushes those
+#     commits here, so PEER_AHEAD is a handover rather than a stall. The price
+#     is that independent commits on both sides end in DIVERGED (exit 20),
+#     which is resolved by hand.
+#
+# See README.md, section "Topology".
 
 on:
   workflow_call:

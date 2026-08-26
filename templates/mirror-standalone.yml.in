@@ -1,0 +1,45 @@
+# Standalone copy of the mirror job, for a side that CANNOT include the
+# component: GitLab resolves `include: component:` only within its own
+# instance, so a peer living on a different GitLab (for example gitlab.com)
+# has no way to reference this catalog.
+#
+# GENERATED from mirror.sh by ci/embed.sh - do not edit by hand.
+#
+# Copy this file into the other repository (e.g. .gitlab/ci/mirror.yml), include
+# it from that project's .gitlab-ci.yml, and supply the two values as project
+# CI/CD variables instead of component inputs:
+#
+#   MIRROR_BRANCH      branch to mirror
+#   MIRROR_PEER_URL    ssh://git@host:port/group/project.git
+#   MIRROR_SSH_KEY     type File - private key
+#   MIRROR_KNOWN_HOSTS type File - known_hosts of the peer host
+#
+# Anything else is overridden the ordinary way, by redeclaring the key:
+#
+#   mirror:
+#     stage: mirror
+#     rules:
+#       - if: '$CI_COMMIT_BRANCH == "main"'
+mirror:
+  stage: .pre
+  image: alpine:3.21
+  resource_group: repository-mirror
+  timeout: 10m
+  variables:
+    GIT_DEPTH: "0"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  before_script:
+    - apk add --no-cache git openssh-client
+    - test -n "$MIRROR_PEER_URL"
+    - test -n "$MIRROR_BRANCH"
+    - test -f "$MIRROR_SSH_KEY"
+    - test -f "$MIRROR_KNOWN_HOSTS"
+    - install -d -m 700 "$HOME/.ssh"
+    - cp "$MIRROR_SSH_KEY" "$HOME/.ssh/mirror_key"
+    - chmod 600 "$HOME/.ssh/mirror_key"
+    - cp "$MIRROR_KNOWN_HOSTS" "$HOME/.ssh/known_hosts"
+    - chmod 644 "$HOME/.ssh/known_hosts"
+  script:
+    - |
+      @@MIRROR_SH@@
