@@ -71,10 +71,15 @@ lint:actions:
   # workflow_call `type:` the day it was written instead of six pushes later.
   #
   # Pinned by digest, not by tag: upstream publishes no immutable versioned tag,
-  # and a linter that silently changes its rules is worse than no linter. The
-  # image ships a shell, so GitLab's script wrapper works without an entrypoint
-  # override.
-  image: rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667
+  # and a linter that silently changes its rules is worse than no linter.
+  #
+  # entrypoint must be cleared. The image's ENTRYPOINT is actionlint itself, and
+  # GitLab always wraps the script in a shell, so the command arrives as
+  # `actionlint sh -c ...` and fails with `could not read "sh"`. The image does
+  # ship /bin/sh; it just never gets reached without this.
+  image:
+    name: rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667
+    entrypoint: [""]
   interruptible: true
   script:
     - actionlint -color
