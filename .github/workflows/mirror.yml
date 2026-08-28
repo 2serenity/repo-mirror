@@ -34,9 +34,11 @@ on:
       branch:
         description: "Branch to mirror."
         required: true
+        type: string
       peer-url:
         description: "SSH URL of the peer repository."
         required: true
+        type: string
     secrets:
       ssh-key:
         description: "Private SSH key (deploy key)."

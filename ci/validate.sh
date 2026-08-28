@@ -195,6 +195,20 @@ if [ -f "$WF" ]; then
     ok "$WF: no local action path"
   fi
 
+  # Every workflow_call input must declare `type:`. GitHub requires it here
+  # (unlike workflow_dispatch, where it defaults to string), and a file missing
+  # it does not parse as a workflow at all. The failure is invisible in the way
+  # that matters: the file is still valid YAML, so the check above passes, and
+  # GitHub - unable to read `on:` - reports a startup failure attributed to
+  # `push`, a run with no jobs. Six of those shipped before anyone looked. Same
+  # shape as the missing `---` in the component: green build, dead artefact.
+  UNTYPED=$(yq -r '.on.workflow_call.inputs // {} | to_entries | map(select(.value.type == null)) | .[].key' "$WF" 2>/dev/null || true)
+  if [ -z "$UNTYPED" ]; then
+    ok "$WF: every workflow_call input declares type:"
+  else
+    bad "$WF: workflow_call inputs without type: $(echo $UNTYPED)"
+  fi
+
   MAJOR=$(grep -oE '^## v[0-9]+' CHANGELOG.md | head -1 | sed 's|^## v||' || true)
   WANT="$GH_REPO@v${MAJOR}"
   GOT=$(grep -oE "uses:[[:space:]]*${GH_REPO}@v[0-9]+" "$WF" | head -1 | sed -E 's/uses:[[:space:]]*//' || true)
