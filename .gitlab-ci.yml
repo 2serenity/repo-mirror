@@ -64,6 +64,21 @@ validate:offline:
   script:
     - sh ci/validate.sh
 
+lint:actions:
+  stage: validate
+  # ci/validate.sh asserts YAML shape; it cannot tell a valid YAML file from a
+  # valid workflow. actionlint can, and would have caught the missing
+  # workflow_call `type:` the day it was written instead of six pushes later.
+  #
+  # Pinned by digest, not by tag: upstream publishes no immutable versioned tag,
+  # and a linter that silently changes its rules is worse than no linter. The
+  # image ships a shell, so GitLab's script wrapper works without an entrypoint
+  # override.
+  image: rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667
+  interruptible: true
+  script:
+    - actionlint -color
+
 test:mirror:
   stage: test
   image: ${ALPINE_IMAGE}

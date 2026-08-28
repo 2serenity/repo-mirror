@@ -1,0 +1,67 @@
+name: Self-test
+
+# The GitHub packaging had no check of its own, and that is exactly how a
+# reusable workflow that GitHub could not parse shipped and sat through six
+# pushes: the file stayed valid YAML, so nothing complained. The GitLab side
+# has compiled the component on every commit from the start (see the
+# self-include in .gitlab-ci.yml); this is its counterpart.
+#
+# It runs the packaged artefact - the composite action, not mirror.sh directly
+# - because the packaging is the part that keeps breaking. The peer is a local
+# bare repository over file://, so the test needs no key, no secret and no
+# network, and it asserts success rather than a particular failure. SSH
+# transport is covered on the GitLab side by a real run.
+
+# No pull_request trigger on purpose: GitHub checks out a merge commit there,
+# so HEAD is not the tip of the branch being mirrored and the assertion below
+# would compare the wrong things. Merge requests are gated on the GitLab side.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  action-mirrors-to-a-local-peer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out full history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Build a peer that is one commit behind
+        run: |
+          set -eu
+          git clone --bare . "$RUNNER_TEMP/peer.git"
+          git -C "$RUNNER_TEMP/peer.git" update-ref refs/heads/main HEAD~1
+          echo "peer at $(git -C "$RUNNER_TEMP/peer.git" rev-parse main)"
+          echo "here at $(git rev-parse HEAD)"
+
+      - name: Mirror to it with the action
+        uses: ./
+        with:
+          branch: main
+          peer-url: file://${{ runner.temp }}/peer.git
+          # file:// never opens an SSH connection; the action still writes these
+          # out, so they must be present but need not be usable.
+          ssh-key: "not-a-key"
+          known-hosts: "not-a-host"
+
+      - name: Assert the peer actually moved
+        run: |
+          set -eu
+          peer=$(git -C "$RUNNER_TEMP/peer.git" rev-parse main)
+          here=$(git rev-parse HEAD)
+          echo "peer=$peer"
+          echo "here=$here"
+          test "$peer" = "$here"
+
+      - name: Assert a second run is a no-op
+        uses: ./
+        with:
+          branch: main
+          peer-url: file://${{ runner.temp }}/peer.git
+          ssh-key: "not-a-key"
+          known-hosts: "not-a-host"
