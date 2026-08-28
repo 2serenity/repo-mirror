@@ -23,6 +23,22 @@ include:
   # it is compiled here too and then switched off by the override below.
   - local: templates/mirror-standalone.yml
 
+  # The real installation: this project mirrors its own default branch to the
+  # public GitHub copy with its own component. Possible only since the two
+  # histories were unified (2026-08-28) - before that they shared no ancestor
+  # and every run would have classified DIVERGED.
+  #
+  # It sits in `publish`, not the component's default `.pre`: a broken mirror.sh
+  # must fail this pipeline, not travel to the copy consumers read. The job
+  # pushes exactly one ref and never tags, so the pre-scrub ancestors still
+  # reachable from tags 1.0.x on this side cannot leak into the public repo.
+  - local: templates/mirror.yml
+    inputs:
+      job_name: mirror-github
+      stage: publish
+      branch: main
+      peer_url: "ssh://git@github.com:22/2serenity/repo-mirror.git"
+
 mirror:
   rules:
     - when: never
@@ -33,6 +49,7 @@ variables:
 stages:
   - validate
   - test
+  - publish
   - release
 
 .alpine:
