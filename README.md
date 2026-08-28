@@ -133,8 +133,34 @@ mirroring is the sole job in a project, give it a normal stage instead.
 > project." — GitLab docs, CI/CD components
 
 So a peer that lives on a different GitLab — gitlab.com against a self-managed
-instance, say — cannot include this component at all, no matter how the catalog
-is published. That side gets the generated standalone job instead:
+instance, say — cannot use `include: component:` for this catalog at all, no
+matter how it is published. Two ways round it.
+
+### A. Fetch it over HTTPS
+
+`include: remote:` takes `inputs:` and works against a `spec:` file, so the
+component itself can be pulled from a public raw URL:
+
+```yaml
+include:
+  - remote: "https://raw.githubusercontent.com/2serenity/repo-mirror/v1/templates/mirror.yml"
+    inputs:
+      branch: main
+      peer_url: ssh://git@example.com:22/group/project.git
+```
+
+Verified by `POST /ci/lint` on GitLab 19.1.2: valid, with the job materialised.
+The GitLab documentation does not spell this combination out, so treat it as
+tested rather than promised, and pin a tag rather than a branch.
+
+The cost is a network dependency: the URL must be reachable anonymously —
+authentication is not supported for remote includes — and every pipeline
+creation fetches it, so a rate-limited or unreachable host breaks pipeline
+creation on that side.
+
+### B. Copy the standalone job
+
+No network dependency, at the price of a copy you re-sync by hand:
 
 1. Copy `templates/mirror-standalone.yml` (from the tag you consume) into the
    peer repository, e.g. as `.gitlab/ci/mirror.yml`.
@@ -147,6 +173,9 @@ That file is generated from `mirror.sh` by the same `ci/embed.sh` and checked
 for drift by `ci/validate.sh`, so it is a *copy of a release*, not a fork of
 the logic. Re-copy it when you move to a new tag; nothing on the other instance
 can do that for you.
+
+Prefer A when the peer may reach the internet, B when it may not or when
+pipeline creation must not depend on a third party.
 
 ## GitHub consumer
 
