@@ -198,6 +198,69 @@ Only pushes made with `GITHUB_TOKEN` are excluded from triggering workflows, so
 in a two-way setup a delivery arriving here does start the mirror workflow,
 which then reports `EQUAL`.
 
+The call above is exercised on every push to `main` of this repository by
+`.github/workflows/selftest.yml`, which resolves it by full path at the
+released tag against an HTTPS peer. What that covers is resolution of the tag,
+the typed inputs and the pinned action — not the SSH transport, and not the
+access rules between two different private repositories.
+
+### Mirroring into a self-managed GitLab
+
+Same code with the ends swapped, but four things bite in this direction and
+nowhere else.
+
+**The runner has to reach the GitLab SSH port.** GitHub-hosted runners sit on
+the public internet. An instance that answers SSH only inside a private network
+cannot be a peer for them at all, and the direction needs a self-hosted runner
+instead. Establish that first, from outside the network — not from a workflow,
+see the next point:
+
+```sh
+nc -z -w5 gitlab.example.com 2222
+```
+
+**The peer URL ends up in the log.** `git` prints `From …` and `To …` with the
+full URL, so the peer's host and port are as public as the caller repository's
+Actions logs. Registering the hostname as a repository secret makes Actions
+redact it; that is a backstop, not a boundary.
+
+**A non-default port changes two values, not one.** `ssh://` is mandatory —
+scp-style `git@host:group/project.git` cannot carry a port — and the host key
+entry is looked up under `[host]:port`:
+
+```sh
+ssh-keyscan -p 2222 gitlab.example.com   # -> [gitlab.example.com]:2222 ssh-ed25519 …
+```
+
+```yaml
+peer-url: ssh://git@gitlab.example.com:2222/group/project.git
+```
+
+An entry without the brackets is not matched for a non-22 port, and
+`StrictHostKeyChecking=yes` then fails the job with `31`.
+
+**A protected receiving branch does not need the deploy key listed on it.** A
+deploy key added with write access pushes to a protected branch as long as
+*somebody* is selected under *Allowed to push and merge* and the key's creator
+is a project member who can read the code. Verified on a fresh project whose
+`main` allowed Maintainers only, with no `deploy_key_id` anywhere in
+`push_access_levels`: the push went through. What blocks a deploy key is a
+branch nobody may push to at all.
+
+```sh
+curl -sH "PRIVATE-TOKEN: <token>" \
+  https://gitlab.example.com/api/v4/projects/<id>/protected_branches
+```
+
+A refusal at this step ends the run `32`, not `31` — SSH authenticated, GitLab
+declined the write — so read the exit code before suspecting the key.
+
+One asymmetry between the two packagings is worth knowing when you reuse the
+same private key on both sides: the GitHub action writes the key with
+`printf '%s\n'` and so supplies the trailing newline itself, while the GitLab
+job copies the File variable verbatim. A key stored there without its final
+newline fails in libcrypto and reports as `Permission denied (publickey)`.
+
 ## Inputs (GitLab component)
 
 | Input | Type | Default | Required |

@@ -65,3 +65,30 @@ jobs:
           peer-url: file://${{ runner.temp }}/peer.git
           ssh-key: "not-a-key"
           known-hosts: "not-a-host"
+
+  # The job above proves the action at HEAD works. It does not prove the part a
+  # consumer actually touches: `uses: <owner>/<repo>/.github/workflows/...@<tag>`.
+  # That path was documentation-only until now - no caller had ever resolved it,
+  # which is how a workflow GitHub could not even parse sat unnoticed.
+  #
+  # This calls the reusable workflow the way a consumer does, by full path at
+  # the released tag, so it exercises tag resolution, the typed workflow_call
+  # inputs, secret mapping by name, and the download of 2serenity/repo-mirror@v1
+  # pinned inside it. It tests the TAG, not HEAD - which is the point: it fails
+  # when the reference consumers actually use is broken.
+  #
+  # The peer is this repository over HTTPS, so the run needs no key and no
+  # reachable private host: classify() sees the same commit on both sides and
+  # exits EQUAL before any push. What it therefore does not cover is the SSH
+  # transport (covered by a real run on the GitLab side) and the access rules
+  # between two *different* repositories, which a public callee does not have.
+  released-workflow-resolves-for-a-consumer:
+    uses: 2serenity/repo-mirror/.github/workflows/mirror.yml@v1
+    with:
+      branch: main
+      peer-url: https://github.com/2serenity/repo-mirror.git
+    secrets:
+      # Never used: an HTTPS peer opens no SSH connection, and EQUAL returns
+      # before the push step.
+      ssh-key: "not-a-key"
+      known-hosts: "not-a-host"

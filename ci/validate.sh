@@ -227,6 +227,22 @@ if [ -f "$WF" ]; then
   else
     bad "$WF: an actions/* reference is not pinned to a 40-char SHA"
   fi
+
+  # The self-test calls the reusable workflow the way a consumer does - by full
+  # path at the released tag. If that reference drifts behind the current major
+  # the job still passes, while silently exercising a version nobody consumes.
+  ST=".github/workflows/selftest.yml"
+  SWANT="${GH_REPO}/.github/workflows/mirror.yml@v${MAJOR}"
+  SGOT=$(grep -oE "uses:[[:space:]]*${GH_REPO}/\\.github/workflows/mirror\\.yml@v[0-9]+" "$ST" 2>/dev/null \
+         | head -1 | sed -E 's/uses:[[:space:]]*//' || true)
+
+  if [ ! -f "$ST" ]; then
+    bad "$ST: missing - the GitHub packaging would again have no check of its own"
+  elif [ "$SGOT" = "$SWANT" ]; then
+    ok "$ST: calls the reusable workflow at $SWANT"
+  else
+    bad "$ST: reusable workflow call is [$SGOT], expected [$SWANT]"
+  fi
 fi
 
 echo
